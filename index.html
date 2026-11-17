@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#15304d">
+</head>
+<body>
+<title>Keepy-Uppy Phone</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: the phone screen IS the court, seen from above; HUD floats in the safe areas. Single night-court look by choice. */
+:root {
+  --court: #15304d;
+  --court-2: #1d4167;
+  --line: rgba(222, 234, 248, 0.14);
+  --ink: #eef3fa;
+  --muted: #9fb4cb;
+  --ball: #ffb43c;
+  --hot: #ff5c70;
+  --panel: rgba(9, 21, 35, 0.9);
+  --display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; overflow: hidden; overscroll-behavior: none; background: var(--court); color: var(--ink); }
+body { font-family: var(--display); touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+.hud {
+  position: fixed; left: 0; right: 0; top: 0; pointer-events: none;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 12px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+}
+.score { font-weight: 800; font-size: 3.2rem; line-height: 0.9; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.label { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.right { text-align: right; display: grid; gap: 6px; justify-items: end; }
+.chip { font-family: var(--mono); font-weight: 700; font-size: 0.95rem; padding: 3px 9px; border-radius: 999px; background: rgba(255, 180, 60, 0.16); color: var(--ball); font-variant-numeric: tabular-nums; }
+.readout { font-family: var(--mono); font-size: 0.85rem; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.hint {
+  position: fixed; left: 0; right: 0; bottom: 0; text-align: center; pointer-events: none;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  font-family: var(--mono); font-size: 0.8rem; color: var(--muted); letter-spacing: 0.02em;
+}
+
+.overlay {
+  position: fixed; inset: 0; display: grid; place-items: center; background: rgba(8, 18, 30, 0.55);
+  padding-block: calc(env(safe-area-inset-top, 0px) + 16px) calc(env(safe-area-inset-bottom, 0px) + 16px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  overflow-y: auto; touch-action: pan-y;
+}
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 26px 22px; max-width: 360px; width: 100%; display: grid; gap: 16px; box-shadow: 0 20px 60px rgba(0,0,0,.45); }
+.card h1 { margin: 0; font-size: 2.3rem; line-height: 0.95; font-weight: 800; letter-spacing: -0.02em; text-wrap: balance; }
+.card h1 span { color: var(--ball); }
+.card p { margin: 0; color: var(--muted); font-size: 0.95rem; line-height: 1.45; }
+.card ol { margin: 0; padding-left: 1.2em; color: var(--ink); font-size: 0.92rem; line-height: 1.5; display: grid; gap: 4px; }
+.btns { display: grid; gap: 10px; }
+button { font: inherit; font-weight: 800; font-size: 1.05rem; border: 0; border-radius: 12px; padding: 14px 16px; cursor: pointer; }
+button.primary { background: var(--ball); color: #2a1600; }
+button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); font-weight: 500; }
+button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+.note { font-family: var(--mono); font-size: 0.75rem; color: var(--hot); line-height: 1.4; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stats div { display: grid; gap: 2px; }
+.stats b { font-size: 1.7rem; font-variant-numeric: tabular-nums; }
+</style>
+
+<canvas id="c" aria-label="Game court"></canvas>
+
+<div class="hud">
+  <div>
+    <div class="label">Score</div>
+    <div class="score" id="score">0</div>
+  </div>
+  <div class="right">
+    <div class="chip" id="mult">×1</div>
+    <div class="readout" id="height">on screen</div>
+    <div class="label" id="best">Best 0</div>
+  </div>
+</div>
+<div class="hint" id="hint"></div>
+
+<div class="overlay" id="start">
+  <div class="card">
+    <h1>Keepy-Uppy <span>Phone</span></h1>
+    <p>Your screen is the paddle. Keep the ball bouncing on it.</p>
+    <ol>
+      <li>Hold the phone flat, screen up.</li>
+      <li>Flick it upward to launch the ball.</li>
+      <li>Follow the shadow. If the ball drifts off, the arrow shows where it is.</li>
+      <li>Lift the phone into the ball as it lands for a bigger bounce. Faster impacts score more.</li>
+    </ol>
+    <div class="btns">
+      <button class="primary" id="playMotion">Play with motion</button>
+      <button class="ghost" id="playTouch">Play with touch</button>
+    </div>
+    <div class="note" id="startNote" hidden></div>
+  </div>
+</div>
+
+<div class="overlay" id="over" hidden>
+  <div class="card">
+    <h1 id="overTitle">Dropped it</h1>
+    <div class="stats">
+      <div><span class="label">Score</span><b id="oScore">0</b></div>
+      <div><span class="label">Bounces</span><b id="oBounces">0</b></div>
+      <div><span class="label">Best</span><b id="oBest">0</b></div>
+    </div>
+    <p id="overMsg"></p>
+    <div class="btns">
+      <button class="primary" id="again">Play again</button>
+      <button class="ghost" id="menu">Change controls</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ---------- tuning (world units are meters; the screen stands for a 60 cm wide paddle) ----------
+  const SCREEN_W_M = 0.6, G = 9.8, R_M = 0.032, E = 0.74;
+  const LAUNCH_GAIN = 2.6;   // real phone speed -> game speed
+  const TILT_GAIN = 0.45;    // how much tilt makes the ball drift
+  const CHASE_GAIN = 2.2;    // how much moving the phone sideways shifts the ball
+  const SPIN_GAIN = 0.12;    // wrist rotation -> sideways launch
+  const MIN_BOUNCE = 1.1, MAX_VZ = 13, Z_VIEW = 5;
+  const D2R = Math.PI / 180;
+
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  const $ = id => document.getElementById(id);
+  const ui = { score: $('score'), mult: $('mult'), height: $('height'), best: $('best'), hint: $('hint') };
+
+  let W, H, DPR, PPM, courtImg;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 3);
+    W = window.innerWidth; H = window.innerHeight;
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    PPM = Math.min(W, H) / SCREEN_W_M;
+    drawCourt();
+  }
+
+  function drawCourt() {
+    courtImg = document.createElement('canvas');
+    courtImg.width = cv.width; courtImg.height = cv.height;
+    const c = courtImg.getContext('2d');
+    c.setTransform(DPR, 0, 0, DPR, 0, 0);
+    const css = getComputedStyle(document.documentElement);
+    const g = c.createRadialGradient(W / 2, H / 2, 10, W / 2, H / 2, Math.hypot(W, H) / 1.6);
+    g.addColorStop(0, css.getPropertyValue('--court-2').trim() || '#1d4167');
+    g.addColorStop(1, css.getPropertyValue('--court').trim() || '#15304d');
+    c.fillStyle = g; c.fillRect(0, 0, W, H);
+    // 10 cm grid from the centre
+    c.strokeStyle = 'rgba(222,234,248,0.07)'; c.lineWidth = 1;
+    const step = 0.1 * PPM;
+    for (let x = W / 2 % step; x < W; x += step) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H); c.stroke(); }
+    for (let y = H / 2 % step; y < H; y += step) { c.beginPath(); c.moveTo(0, y); c.lineTo(W, y); c.stroke(); }
+    // centre circle + lines
+    c.strokeStyle = 'rgba(222,234,248,0.18)'; c.lineWidth = 2;
+    c.beginPath(); c.arc(W / 2, H / 2, 0.09 * PPM, 0, Math.PI * 2); c.stroke();
+    c.beginPath(); c.moveTo(0, H / 2); c.lineTo(W, H / 2); c.stroke();
+    // boundary inset
+    c.strokeStyle = 'rgba(222,234,248,0.22)'; c.lineWidth = 3;
+    c.strokeRect(6, 6, W - 12, H - 12);
+    // ruler ticks along the right edge, in cm of the virtual paddle
+    c.fillStyle = 'rgba(222,234,248,0.35)'; c.font = '10px ui-monospace, monospace'; c.textAlign = 'right';
+    for (let cm = -100; cm <= 100; cm += 2) {
+      const y = H / 2 + cm / 100 * PPM;
+      if (y < 10 || y > H - 10) continue;
+      const big = cm % 10 === 0;
+      c.fillRect(W - 6 - (big ? 12 : 6), y, big ? 12 : 6, 1);
+      if (big && cm !== 0 && y > 110 && y < H - 80) c.fillText(Math.abs(cm) + '', W - 22, y + 3);
+    }
+  }
+
+  // ---------- sensors ----------
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const S = { count: 0, flip: 1, flipSet: false, samples: [], grav: [0, 0, 9.8], up: [0, 0, 1], lin: [0, 0, 0], rot: [0, 0, 0],
+              aUp: 0, vUp: 0, last: 0, releaseV: 0, releaseT: 0 };
+
+  function onMotion(e) {
+    const g = e.accelerationIncludingGravity;
+    if (!g || g.x == null) return;
+    const t = performance.now();
+    const dt = clamp(S.last ? (t - S.last) / 1000 : 0.016, 0.004, 0.05);
+    S.last = t; S.count++;
+    if (!S.flipSet) {
+      // Some browsers report the opposite sign. Phone starts flat & screen up, so "up" must be +z.
+      S.samples.push(g.z);
+      if (S.samples.length >= 10) {
+        const avg = S.samples.reduce((a, b) => a + b, 0) / S.samples.length;
+        S.flip = Math.abs(avg) > 4 ? Math.sign(avg) : (isIOS ? -1 : 1);
+        S.flipSet = true;
+      }
+    }
+    const f = S.flip, aig = [g.x * f, g.y * f, g.z * f];
+    const a = e.acceleration;
+    if (a && a.x != null) {
+      S.lin = [a.x * f, a.y * f, a.z * f];
+      S.grav = [aig[0] - S.lin[0], aig[1] - S.lin[1], aig[2] - S.lin[2]];
+    } else {
+      const k = Math.min(1, dt / 0.25);
+      S.grav = S.grav.map((v, i) => v + (aig[i] - v) * k);
+      S.lin = aig.map((v, i) => v - S.grav[i]);
+    }
+    const n = Math.hypot(S.grav[0], S.grav[1], S.grav[2]) || 1;
+    S.up = S.grav.map(v => v / n);
+    S.aUp = S.lin[0] * S.up[0] + S.lin[1] * S.up[1] + S.lin[2] * S.up[2];
+    S.vUp = S.vUp * Math.exp(-dt / 0.35) + S.aUp * dt;   // leaky integral = recent upward speed
+    // The ball leaves the paddle when the phone, moving up, brakes hard.
+    if (S.vUp > 0.45 && S.aUp < -3.5 && t - S.releaseT > 150) { S.releaseV = Math.max(S.releaseV, S.vUp); S.releaseT = t; }
+    const r = e.rotationRate;
+    if (r && r.alpha != null) S.rot = [(r.beta || 0) * D2R, (r.gamma || 0) * D2R, (r.alpha || 0) * D2R];
+  }
+
+  function orientAngle() {
+    const o = screen.orientation;
+    return (o && typeof o.angle === 'number') ? o.angle : (window.orientation || 0);
+  }
+  // device vector -> [screen right, screen down, out of screen]
+  function toScreen(v) {
+    const th = orientAngle() * D2R, c = Math.cos(th), s = Math.sin(th);
+    return [v[0] * c - v[1] * s, -(v[0] * s + v[1] * c), v[2]];
+  }
+  function spinKick() {
+    const w = toScreen(S.rot);              // [about right axis, about down axis, ...]
+    const wr = clamp(w[0], -8, 8), wu = clamp(-w[1], -8, 8);
+    return [SPIN_GAIN * wu, SPIN_GAIN * wr];
+  }
+
+  // ---------- game state ----------
+  let mode = 'touch', state = 'idle', playing = false;
+  const b = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+  let score = 0, bounces = 0, lastMult = 1, best = 0;
+  let lastTap = -1e9, lastBounceT = -1e9, tapBoosted = false;
+  const fx = [];   // rings and popups
+
+  try { best = +localStorage.getItem('kup-best') || 0; } catch (e) {}
+  ui.best.textContent = 'Best ' + best;
+
+  // ---------- sound ----------
+  let ac = null;
+  function initAudio() {
+    try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); ac.resume && ac.resume(); } catch (e) { ac = null; }
+  }
+  function blip(freq, dur, type = 'sine', vol = 0.18) {
+    if (!ac) return;
+    const t = ac.currentTime, o = ac.createOscillator(), gn = ac.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(freq * 0.6, t + dur);
+    gn.gain.setValueAtTime(vol, t); gn.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(gn).connect(ac.destination); o.start(t); o.stop(t + dur);
+  }
+  const buzz = ms => { try { navigator.vibrate && navigator.vibrate(ms); } catch (e) {} };
+
+  function reset() {
+    Object.assign(b, { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 });
+    score = 0; bounces = 0; lastMult = 1; fx.length = 0;
+    state = 'rest'; playing = true;
+    S.releaseV = 0;
+    updateHud(); setHint();
+  }
+
+  function setHint() {
+    if (state === 'rest') ui.hint.textContent = mode === 'motion' ? 'Flick the phone up to launch' : 'Swipe up on the screen to launch';
+    else if (state === 'air') ui.hint.textContent = mode === 'motion' ? 'Get under the shadow. Lift into the ball as it lands.' : 'Drag to steer. Tap as it lands to bounce it higher.';
+    else ui.hint.textContent = '';
+  }
+
+  function updateHud() {
+    ui.score.textContent = score;
+    ui.mult.textContent = '×' + lastMult;
+    ui.height.textContent = state === 'air' ? '↑ ' + b.z.toFixed(2) + ' m' : 'on screen';
+  }
+
+  function launch(vz, vx = 0, vy = 0) {
+    state = 'air';
+    b.vz = clamp(vz, 1.6, MAX_VZ); b.vx += vx; b.vy += vy;
+    blip(520, 0.12, 'triangle'); buzz(15);
+    setHint();
+  }
+
+  function land(now) {
+    const hw = W / 2 / PPM, hh = H / 2 / PPM, R = R_M;
+    const inside = Math.abs(b.x) <= hw + R * 0.3 && Math.abs(b.y) <= hh + R * 0.3;
+    if (!inside) return gameOver();
+    const vimp = -b.vz;
+    let vp = 0;
+    if (mode === 'motion') vp = clamp(S.vUp, -3, 4) * LAUNCH_GAIN;   // moving up adds, moving down cushions
+    else vp = (now - lastTap < 280) ? 1.0 : 0;
+    tapBoosted = vp > 0;
+    let vout = Math.min(MAX_VZ, Math.max(0, E * (vimp + vp) + vp));
+    if (vout < MIN_BOUNCE) {
+      state = 'rest'; b.z = 0; b.vz = 0; b.vx *= 0.5; b.vy *= 0.5;
+      blip(180, 0.1, 'sine', 0.1);
+      fx.push({ kind: 'ring', x: b.x, y: b.y, t: now, s: 0.6 });
+      updateHud(); setHint();
+      return;
+    }
+    const mult = 1 + Math.floor(vimp / 3);
+    lastMult = mult; bounces++; score += mult;
+    b.z = 0; b.vz = vout; lastBounceT = now;
+    if (mode === 'motion') { const k = spinKick(); b.vx = b.vx * 0.85 + k[0]; b.vy = b.vy * 0.85 + k[1]; }
+    else { b.vx = b.vx * 0.8 + (Math.random() - 0.5) * 0.5; b.vy = b.vy * 0.8 + (Math.random() - 0.5) * 0.5; }
+    fx.push({ kind: 'ring', x: b.x, y: b.y, t: now, s: Math.min(2, 0.6 + vimp / 5) });
+    fx.push({ kind: 'pop', x: b.x, y: b.y, t: now, text: '+' + mult + (mult > 1 ? '  ×' + mult : '') });
+    blip(300 + vimp * 60, 0.14, 'square', 0.12); buzz(25);
+    updateHud();
+  }
+
+  function gameOver() {
+    playing = false; state = 'over';
+    blip(110, 0.4, 'sawtooth', 0.15); buzz([60, 40, 120]);
+    const newBest = score > best;
+    if (newBest) { best = score; try { localStorage.setItem('kup-best', best); } catch (e) {} }
+    ui.best.textContent = 'Best ' + best;
+    $('oScore').textContent = score; $('oBounces').textContent = bounces; $('oBest').textContent = best;
+    $('overTitle').textContent = newBest && score > 0 ? 'New best!' : 'Dropped it';
+    const hw = W / 2 / PPM, hh = H / 2 / PPM;
+    const off = Math.max(Math.abs(b.x) - hw, Math.abs(b.y) - hh, 0);
+    $('overMsg').textContent = 'The ball hit the floor ' + Math.round(off * 100) + ' cm off the edge of your screen.';
+    $('over').hidden = false; setHint(); updateHud();
+  }
+
+  function lateralAccel() {
+    if (mode !== 'motion' || !S.count) return [0, 0];
+    const up = toScreen(S.up), lin = toScreen(S.lin);
+    const dz = v => Math.abs(v) < 0.25 ? 0 : v - Math.sign(v) * 0.25;
+    return [-G * up[0] * TILT_GAIN - dz(lin[0]) * CHASE_GAIN,
+            -G * up[1] * TILT_GAIN - dz(lin[1]) * CHASE_GAIN];
+  }
+
+  function step(dt, now) {
+    if (!playing) return;
+    if (state === 'rest' && mode === 'motion' && S.releaseV > 0) {
+      if (now - S.releaseT < 150 && S.up[2] > 0.5) {
+        const k = spinKick();
+        launch(S.releaseV * LAUNCH_GAIN, k[0], k[1]);
+      }
+      S.releaseV = 0;
+    }
+    const [ax, ay] = lateralAccel();
+    const hw = W / 2 / PPM, hh = H / 2 / PPM, R = R_M;
+    if (state === 'air') {
+      b.vx += ax * dt; b.vy += ay * dt; b.vz -= G * dt;
+      b.x += b.vx * dt; b.y += b.vy * dt; b.z += b.vz * dt;
+      if (b.z <= 0) land(now);
+    } else if (state === 'rest') {
+      b.vx += ax * dt; b.vy += ay * dt;
+      const fr = Math.exp(-1.5 * dt); b.vx *= fr; b.vy *= fr;
+      b.x += b.vx * dt; b.y += b.vy * dt;
+      if (Math.abs(b.x) > hw - R) { b.x = Math.sign(b.x) * (hw - R); b.vx *= -0.45; }
+      if (Math.abs(b.y) > hh - R) { b.y = Math.sign(b.y) * (hh - R); b.vy *= -0.45; }
+    }
+  }
+
+  // ---------- drawing ----------
+  function drawBall(px, py, r, alpha) {
+    ctx.save(); ctx.globalAlpha = alpha;
+    const g = ctx.createRadialGradient(px - r * 0.35, py - r * 0.4, r * 0.1, px, py, r);
+    g.addColorStop(0, '#fff3d6'); g.addColorStop(0.35, '#ffb43c'); g.addColorStop(1, '#c4661a');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(90,40,0,0.35)'; ctx.lineWidth = Math.max(1, r * 0.08);
+    ctx.beginPath(); ctx.arc(px, py, r * 0.98, -0.6, 1.9); ctx.stroke();
+    ctx.restore();
+  }
+
+  function render(now) {
+    ctx.drawImage(courtImg, 0, 0, W, H);
+    const r0 = R_M * PPM;
+    const px = W / 2 + b.x * PPM, py = H / 2 + b.y * PPM;
+    const onScreen = px > -r0 && px < W + r0 && py > -r0 && py < H + r0;
+
+    // effects
+    for (let i = fx.length - 1; i >= 0; i--) {
+      const f = fx[i], age = (now - f.t) / 1000;
+      const fpx = W / 2 + f.x * PPM, fpy = H / 2 + f.y * PPM;
+      if (f.kind === 'ring') {
+        if (age > 0.5) { fx.splice(i, 1); continue; }
+        ctx.strokeStyle = `rgba(255,180,60,${0.6 * (1 - age / 0.5)})`; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(fpx, fpy, r0 * (1 + age * 6 * f.s), 0, Math.PI * 2); ctx.stroke();
+      } else {
+        if (age > 0.9) { fx.splice(i, 1); continue; }
+        ctx.fillStyle = `rgba(238,243,250,${1 - age / 0.9})`;
+        ctx.font = '800 22px "Bricolage Grotesque", system-ui, sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText(f.text, clamp(fpx, 40, W - 40), clamp(fpy - r0 * 2 - age * 50, 60, H - 20));
+      }
+    }
+
+    if (state === 'rest' || state === 'idle' || (state === 'over' && b.z <= 0 && onScreen)) {
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.beginPath(); ctx.ellipse(px + r0 * 0.25, py + r0 * 0.3, r0, r0 * 0.85, 0, 0, Math.PI * 2); ctx.fill();
+      drawBall(px, py, r0, 1);
+    } else if (state === 'air') {
+      const h = clamp(b.z / Z_VIEW, 0, 1);
+      if (onScreen) {
+        // shadow grows and darkens as the ball comes down
+        const sr = r0 * (0.45 + 0.75 * (1 - h));
+        const blur = r0 * (0.2 + 1.6 * h);
+        const g = ctx.createRadialGradient(px, py, 0, px, py, sr + blur);
+        const a = 0.15 + 0.5 * (1 - h);
+        g.addColorStop(0, `rgba(0,0,0,${a})`);
+        g.addColorStop(sr / (sr + blur), `rgba(0,0,0,${a * 0.8})`);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(px, py, sr + blur, 0, Math.PI * 2); ctx.fill();
+        // landing crosshair when it's close
+        if (b.z < 1.2 && b.vz < 0) {
+          ctx.strokeStyle = `rgba(255,92,112,${0.7 * (1 - b.z / 1.2)})`; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(px, py, sr * 1.25, 0, Math.PI * 2); ctx.stroke();
+        }
+        // the ball itself fades in when it gets near the screen (bigger = closer to your eye)
+        if (b.z < 1.0) drawBall(px, py, r0 * (1 + b.z * 0.9), clamp(1 - b.z, 0, 1) * 0.95);
+      } else {
+        drawArrow(px, py, now);
+      }
+    }
+  }
+
+  function drawArrow(px, py, now) {
+    const cx = W / 2, cy = H / 2, dx = px - cx, dy = py - cy;
+    const m = 46, hx = W / 2 - m, hy = H / 2 - m;
+    const s = Math.min(hx / Math.abs(dx || 1e-6), hy / Math.abs(dy || 1e-6));
+    const ang = Math.atan2(dy, dx);
+    const bob = Math.sin(now / 110) * 6;
+    const ax = cx + dx * s + Math.cos(ang) * bob, ay = cy + dy * s + Math.sin(ang) * bob;
+    const danger = b.vz < 0 ? clamp(1 - b.z / 1.5, 0, 1) : 0;
+    const col = `rgb(${Math.round(238 + (255 - 238) * danger)},${Math.round(243 - (243 - 92) * danger)},${Math.round(250 - (250 - 112) * danger)})`;
+    ctx.save(); ctx.translate(ax, ay); ctx.rotate(ang);
+    ctx.fillStyle = col; ctx.strokeStyle = 'rgba(9,21,35,0.8)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(22, 0); ctx.lineTo(-10, -16); ctx.lineTo(-3, 0); ctx.lineTo(-10, 16); ctx.closePath();
+    ctx.stroke(); ctx.fill();
+    ctx.restore();
+    // distance from the edge of the screen + height
+    const hw = W / 2 / PPM, hh = H / 2 / PPM;
+    const off = Math.hypot(Math.max(Math.abs(b.x) - hw, 0), Math.max(Math.abs(b.y) - hh, 0));
+    const lx = clamp(ax - Math.cos(ang) * 46, 44, W - 44), ly = clamp(ay - Math.sin(ang) * 40, 70, H - 50);
+    ctx.textAlign = 'center';
+    ctx.font = '700 15px "JetBrains Mono", ui-monospace, monospace';
+    ctx.fillStyle = col; ctx.fillText(Math.round(off * 100) + ' cm', lx, ly);
+    ctx.font = '500 11px "JetBrains Mono", ui-monospace, monospace';
+    ctx.fillStyle = 'rgba(238,243,250,0.75)'; ctx.fillText('↑' + b.z.toFixed(1) + ' m', lx, ly + 15);
+  }
+
+  // ---------- loop ----------
+  let lastT = 0;
+  function frame(t) {
+    const dt = Math.min(0.033, lastT ? (t - lastT) / 1000 : 0.016); lastT = t;
+    if (playing) { step(dt / 2, t); if (playing) step(dt / 2, t); }
+    if (state === 'air') ui.height.textContent = '↑ ' + Math.max(0, b.z).toFixed(2) + ' m';
+    render(t);
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- touch / mouse ----------
+  let ptr = null;
+  cv.addEventListener('pointerdown', e => {
+    if (!playing) return;
+    const now = performance.now();
+    lastTap = now;
+    // a tap just after a bounce still counts
+    if (mode === 'touch' && state === 'air' && now - lastBounceT < 110 && !tapBoosted) { b.vz += 1.0 * (1 + E); tapBoosted = true; }
+    ptr = { id: e.pointerId, hist: [[e.clientX, e.clientY, now]], lx: e.clientX, ly: e.clientY };
+    try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+  cv.addEventListener('pointermove', e => {
+    if (!ptr || e.pointerId !== ptr.id) return;
+    const now = performance.now();
+    ptr.hist.push([e.clientX, e.clientY, now]);
+    while (ptr.hist.length > 2 && now - ptr.hist[0][2] > 100) ptr.hist.shift();
+    if (mode === 'touch' && state === 'air') { b.x += (e.clientX - ptr.lx) / PPM; b.y += (e.clientY - ptr.ly) / PPM; }
+    ptr.lx = e.clientX; ptr.ly = e.clientY;
+  });
+  const endPtr = e => {
+    if (!ptr || e.pointerId !== ptr.id) return;
+    const h = ptr.hist, a = h[0], z = h[h.length - 1];
+    const dtp = (z[2] - a[2]) / 1000;
+    if (playing && state === 'rest' && dtp > 0.01) {
+      const vx = (z[0] - a[0]) / dtp, vy = (z[1] - a[1]) / dtp, sp = Math.hypot(vx, vy);
+      if (sp > 350 && vy < 0) launch(clamp(sp / PPM * 0.75, 2.5, 10), vx / PPM * 0.08, vy / PPM * 0.03);
+    }
+    ptr = null;
+  };
+  cv.addEventListener('pointerup', endPtr);
+  cv.addEventListener('pointercancel', endPtr);
+
+  // ---------- start ----------
+  function note(msg) { const n = $('startNote'); n.textContent = msg; n.hidden = !msg; }
+  async function wakeLock() { try { await navigator.wakeLock.request('screen'); } catch (e) {} }
+
+  function begin(m, msg) {
+    mode = m;
+    $('start').hidden = true; $('over').hidden = true;
+    reset(); wakeLock();
+    if (msg) { ui.hint.textContent = msg; setTimeout(setHint, 3500); }
+  }
+
+  let listening = false;
+  $('playMotion').addEventListener('click', async () => {
+    initAudio();
+    try {
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        const res = await DeviceMotionEvent.requestPermission();
+        if (res !== 'granted') { note('Motion access was declined. You can still play with touch, or allow motion in your browser settings and reload.'); return; }
+      }
+    } catch (e) { /* not a user gesture or unsupported: fall through to detection */ }
+    if (!listening) { window.addEventListener('devicemotion', onMotion); listening = true; }
+    S.flipSet = false; S.samples = [];
+    const startCount = S.count;
+    $('playMotion').textContent = 'Checking sensors…';
+    await new Promise(r => setTimeout(r, 900));
+    $('playMotion').textContent = 'Play with motion';
+    if (S.count - startCount < 3) {
+      note('No motion sensor data reached this page. Phones only share it with pages served over HTTPS, and some embedded viewers block it. Play with touch here, or open the standalone version.');
+      return;
+    }
+    note('');
+    begin('motion');
+  });
+  $('playTouch').addEventListener('click', () => { initAudio(); begin('touch'); });
+  $('again').addEventListener('click', () => { initAudio(); S.flipSet = false; S.samples = []; begin(mode); });
+  $('menu').addEventListener('click', () => { $('over').hidden = true; $('start').hidden = false; state = 'idle'; Object.assign(b, { x: 0, y: 0, z: 0 }); setHint(); updateHud(); });
+
+  document.addEventListener('visibilitychange', () => { lastT = 0; });
+  window.addEventListener('resize', resize);
+  resize();
+  state = 'idle'; updateHud();
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body>
+</html>
