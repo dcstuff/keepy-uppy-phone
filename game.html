@@ -224,29 +224,33 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     const r = e.rotationRate;
     if (r && r.alpha != null) { S.rot = [(r.beta || 0) * D2R, (r.gamma || 0) * D2R, (r.alpha || 0) * D2R]; S.hasRot = true; }
 
+    // Gravity direction. During fast motion it is carried forward with the gyro; it is only
+    // re-synced to the accelerometer while the phone is steady. Linear acceleration is then
+    // the total reading minus that gravity. The phone's own "acceleration" reading is used only
+    // while steady, because on some phones it lags the total reading, and subtracting a lagging
+    // value during a sharp flick throws the gravity direction far off.
     const a = e.acceleration;
-    if (a && a.x != null) {
-      S.lin = [a.x * f, a.y * f, a.z * f];
-      S.grav = [aig[0] - S.lin[0], aig[1] - S.lin[1], aig[2] - S.lin[2]];
-    } else {
-      // No separate linear acceleration (some Android phones). Follow gravity with the gyro and
-      // only lean on the accelerometer for it while the phone isn't accelerating, so a quick
-      // flick isn't mistaken for a change in gravity.
-      if (!S.grav) S.grav = aig.slice();
-      if (S.hasRot) {
-        const [wx, wy, wz] = S.rot, [gx, gy, gz] = S.grav;
-        // a fixed world direction, seen from a rotating phone, turns the other way: dg = -w x g
-        S.grav = [gx - (wy * gz - wz * gy) * dt, gy - (wz * gx - wx * gz) * dt, gz - (wx * gy - wy * gx) * dt];
-      }
-      const steady = Math.abs(Math.hypot(aig[0], aig[1], aig[2]) - 9.81) < 0.8;
-      const tau = steady ? (S.hasRot ? 0.6 : 0.3) : (S.hasRot ? 4 : 1.5);
-      const k = Math.min(1, dt / tau);
-      S.grav = S.grav.map((v, i) => v + (aig[i] - v) * k);
-      S.lin = aig.map((v, i) => v - S.grav[i]);
+    const linDev = (a && a.x != null) ? [a.x * f, a.y * f, a.z * f] : null;
+    if (!S.grav) S.grav = linDev ? aig.map((v, i) => v - linDev[i]) : aig.slice();
+    if (S.hasRot) {
+      const [wx, wy, wz] = S.rot, [gx, gy, gz] = S.grav;
+      // a fixed world direction, seen from a rotating phone, turns the other way: dg = -w x g
+      S.grav = [gx - (wy * gz - wz * gy) * dt, gy - (wz * gx - wx * gz) * dt, gz - (wx * gy - wy * gx) * dt];
     }
+    const aigOff = Math.abs(Math.hypot(aig[0], aig[1], aig[2]) - 9.81);
+    const steady = linDev ? (aigOff < 1.2 && Math.hypot(linDev[0], linDev[1], linDev[2]) < 1.2) : aigOff < 0.8;
+    const sample = (linDev && steady) ? aig.map((v, i) => v - linDev[i]) : aig;
+    const tau = steady ? (linDev ? 0.1 : (S.hasRot ? 0.6 : 0.3)) : (S.hasRot ? 4 : 1.5);
+    const k = Math.min(1, dt / tau);
+    S.grav = S.grav.map((v, i) => v + (sample[i] - v) * k);
+    const gn = Math.hypot(S.grav[0], S.grav[1], S.grav[2]) || 1;
+    S.grav = S.grav.map(v => v / gn * 9.81);
+    S.lin = aig.map((v, i) => v - S.grav[i]);
     const n = Math.hypot(S.grav[0], S.grav[1], S.grav[2]) || 1;
     S.up = S.grav.map(v => v / n);
     S.aUp = dot(S.lin, S.up);
+    S.upHist = (S.upHist || []); S.upHist.push(S.up[2]); if (S.upHist.length > 6) S.upHist.shift();
+    S.upPrev = S.upHist[0];
 
     // Upward phone speed: integrate, snap to zero whenever the phone is held still, leak slowly.
     S.vUp = S.vUp * Math.exp(-dt / 1.0) + S.aUp * dt;
@@ -257,12 +261,12 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     // the phone brakes hard at the top. Pushes that fall short are reported on the meter.
     // after a flick ends, wait for the phone to settle before watching for the next one
     if (S.settle && S.vUp < 0.05) S.settle = false;
-    if (!S.att && !S.settle && S.vUp > 0.15) S.att = { t0: t, peak: 0 };
+    if (!S.att && !S.settle && S.vUp > 0.15) S.att = { t0: t, peak: 0, upz: S.upPrev };
     const A = S.att;
     if (A) {
       A.peak = Math.max(A.peak, S.vUp);
       if (S.aUp < -FLICK_BRAKE && A.peak >= FLICK_MIN_V) {
-        if (S.up[2] < FLAT_MIN_UPZ) S.events.push({ type: 'miss', why: 'tilt', v: A.peak, tilt: Math.acos(clamp(S.up[2], -1, 1)) / D2R, t });
+        if (A.upz < FLAT_MIN_UPZ) S.events.push({ type: 'miss', why: 'tilt', v: A.peak, tilt: Math.acos(clamp(A.upz, -1, 1)) / D2R, t });
         else if (t - S.lastTrig > 250) { S.events.push({ type: 'flick', v: A.peak, t }); S.lastTrig = t; }
         S.att = null; S.settle = true;
       } else if (S.vUp < 0.05 || t - A.t0 > 700) {
