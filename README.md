@@ -2,7 +2,7 @@
 
 Keep a ball bouncing on your phone screen. Flick the phone up to launch the ball, follow its shadow, and lift into each landing to keep it going. Faster impacts score more.
 
-**Play:** open the GitHub Pages link for this repo on your phone and tap **Play with motion**. Motion sensors only work over HTTPS, which GitHub Pages provides. On an iPhone, Safari will ask for motion permission.
+**Play:** open https://dcstuff.github.io/keepy-uppy-phone/ on your phone and tap **Play**. The game is motion-only: it needs the phone's accelerometer and gyro, which browsers only share over HTTPS (GitHub Pages provides that). On an iPhone, Safari will ask for motion permission.
 
 - `index.html` is the game, a single self-contained file.
 - `game.html` is the same game without the page wrapper, used for the Claude artifact version.

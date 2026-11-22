@@ -93,8 +93,7 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
       <li>Lift the phone into the ball as it lands for a bigger bounce. Faster impacts score more.</li>
     </ol>
     <div class="btns">
-      <button class="primary" id="playMotion">Play with motion</button>
-      <button class="ghost" id="playTouch">Play with touch</button>
+      <button class="primary" id="playMotion">Play</button>
     </div>
     <div class="note" id="startNote" hidden></div>
   </div>
@@ -111,7 +110,6 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     <p id="overMsg"></p>
     <div class="btns">
       <button class="primary" id="again">Play again</button>
-      <button class="ghost" id="menu">Change controls</button>
     </div>
   </div>
 </div>
@@ -232,10 +230,9 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
   }
 
   // ---------- game state ----------
-  let mode = 'touch', state = 'idle', playing = false;
+  let state = 'idle', playing = false;
   const b = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
   let score = 0, bounces = 0, lastMult = 1, best = 0;
-  let lastTap = -1e9, lastBounceT = -1e9, tapBoosted = false;
   const fx = [];   // rings and popups
 
   try { best = +localStorage.getItem('kup-best') || 0; } catch (e) {}
@@ -264,8 +261,8 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
   }
 
   function setHint() {
-    if (state === 'rest') ui.hint.textContent = mode === 'motion' ? 'Flick the phone up to launch' : 'Swipe up on the screen to launch';
-    else if (state === 'air') ui.hint.textContent = mode === 'motion' ? 'Get under the shadow. Lift into the ball as it lands.' : 'Drag to steer. Tap as it lands to bounce it higher.';
+    if (state === 'rest') ui.hint.textContent = 'Flick the phone up to launch';
+    else if (state === 'air') ui.hint.textContent = 'Get under the shadow. Lift into the ball as it lands.';
     else ui.hint.textContent = '';
   }
 
@@ -287,10 +284,7 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     const inside = Math.abs(b.x) <= hw + R * 0.3 && Math.abs(b.y) <= hh + R * 0.3;
     if (!inside) return gameOver();
     const vimp = -b.vz;
-    let vp = 0;
-    if (mode === 'motion') vp = clamp(S.vUp, -3, 4) * LAUNCH_GAIN;   // moving up adds, moving down cushions
-    else vp = (now - lastTap < 280) ? 1.0 : 0;
-    tapBoosted = vp > 0;
+    const vp = clamp(S.vUp, -3, 4) * LAUNCH_GAIN;   // moving up adds, moving down cushions
     let vout = Math.min(MAX_VZ, Math.max(0, E * (vimp + vp) + vp));
     if (vout < MIN_BOUNCE) {
       state = 'rest'; b.z = 0; b.vz = 0; b.vx *= 0.5; b.vy *= 0.5;
@@ -301,9 +295,8 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     }
     const mult = 1 + Math.floor(vimp / 3);
     lastMult = mult; bounces++; score += mult;
-    b.z = 0; b.vz = vout; lastBounceT = now;
-    if (mode === 'motion') { const k = spinKick(); b.vx = b.vx * 0.85 + k[0]; b.vy = b.vy * 0.85 + k[1]; }
-    else { b.vx = b.vx * 0.8 + (Math.random() - 0.5) * 0.5; b.vy = b.vy * 0.8 + (Math.random() - 0.5) * 0.5; }
+    b.z = 0; b.vz = vout;
+    const k = spinKick(); b.vx = b.vx * 0.85 + k[0]; b.vy = b.vy * 0.85 + k[1];
     fx.push({ kind: 'ring', x: b.x, y: b.y, t: now, s: Math.min(2, 0.6 + vimp / 5) });
     fx.push({ kind: 'pop', x: b.x, y: b.y, t: now, text: '+' + mult + (mult > 1 ? '  ×' + mult : '') });
     blip(300 + vimp * 60, 0.14, 'square', 0.12); buzz(25);
@@ -325,7 +318,7 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
   }
 
   function lateralAccel() {
-    if (mode !== 'motion' || !S.count) return [0, 0];
+    if (!S.count) return [0, 0];
     const up = toScreen(S.up), lin = toScreen(S.lin);
     const dz = v => Math.abs(v) < 0.25 ? 0 : v - Math.sign(v) * 0.25;
     return [-G * up[0] * TILT_GAIN - dz(lin[0]) * CHASE_GAIN,
@@ -334,7 +327,7 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
 
   function step(dt, now) {
     if (!playing) return;
-    if (state === 'rest' && mode === 'motion' && S.releaseV > 0) {
+    if (state === 'rest' && S.releaseV > 0) {
       if (now - S.releaseT < 150 && S.up[2] > 0.5) {
         const k = spinKick();
         launch(S.releaseV * LAUNCH_GAIN, k[0], k[1]);
@@ -453,47 +446,13 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     requestAnimationFrame(frame);
   }
 
-  // ---------- touch / mouse ----------
-  let ptr = null;
-  cv.addEventListener('pointerdown', e => {
-    if (!playing) return;
-    const now = performance.now();
-    lastTap = now;
-    // a tap just after a bounce still counts
-    if (mode === 'touch' && state === 'air' && now - lastBounceT < 110 && !tapBoosted) { b.vz += 1.0 * (1 + E); tapBoosted = true; }
-    ptr = { id: e.pointerId, hist: [[e.clientX, e.clientY, now]], lx: e.clientX, ly: e.clientY };
-    try { cv.setPointerCapture(e.pointerId); } catch (err) {}
-  });
-  cv.addEventListener('pointermove', e => {
-    if (!ptr || e.pointerId !== ptr.id) return;
-    const now = performance.now();
-    ptr.hist.push([e.clientX, e.clientY, now]);
-    while (ptr.hist.length > 2 && now - ptr.hist[0][2] > 100) ptr.hist.shift();
-    if (mode === 'touch' && state === 'air') { b.x += (e.clientX - ptr.lx) / PPM; b.y += (e.clientY - ptr.ly) / PPM; }
-    ptr.lx = e.clientX; ptr.ly = e.clientY;
-  });
-  const endPtr = e => {
-    if (!ptr || e.pointerId !== ptr.id) return;
-    const h = ptr.hist, a = h[0], z = h[h.length - 1];
-    const dtp = (z[2] - a[2]) / 1000;
-    if (playing && state === 'rest' && dtp > 0.01) {
-      const vx = (z[0] - a[0]) / dtp, vy = (z[1] - a[1]) / dtp, sp = Math.hypot(vx, vy);
-      if (sp > 350 && vy < 0) launch(clamp(sp / PPM * 0.75, 2.5, 10), vx / PPM * 0.08, vy / PPM * 0.03);
-    }
-    ptr = null;
-  };
-  cv.addEventListener('pointerup', endPtr);
-  cv.addEventListener('pointercancel', endPtr);
-
   // ---------- start ----------
   function note(msg) { const n = $('startNote'); n.textContent = msg; n.hidden = !msg; }
   async function wakeLock() { try { await navigator.wakeLock.request('screen'); } catch (e) {} }
 
-  function begin(m, msg) {
-    mode = m;
+  function begin() {
     $('start').hidden = true; $('over').hidden = true;
     reset(); wakeLock();
-    if (msg) { ui.hint.textContent = msg; setTimeout(setHint, 3500); }
   }
 
   let listening = false;
@@ -502,7 +461,7 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     try {
       if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
         const res = await DeviceMotionEvent.requestPermission();
-        if (res !== 'granted') { note('Motion access was declined. You can still play with touch, or allow motion in your browser settings and reload.'); return; }
+        if (res !== 'granted') { note('Motion access was declined. This game needs it: allow motion for this site in your browser settings, then reload.'); return; }
       }
     } catch (e) { /* not a user gesture or unsupported: fall through to detection */ }
     if (!listening) { window.addEventListener('devicemotion', onMotion); listening = true; }
@@ -510,17 +469,15 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     const startCount = S.count;
     $('playMotion').textContent = 'Checking sensors…';
     await new Promise(r => setTimeout(r, 900));
-    $('playMotion').textContent = 'Play with motion';
+    $('playMotion').textContent = 'Play';
     if (S.count - startCount < 3) {
-      note('No motion sensor data reached this page. Phones only share it with pages served over HTTPS, and some embedded viewers block it. Play with touch here, or open the standalone version.');
+      note('No motion sensor data reached this page. Open it on a phone, over HTTPS (the GitHub Pages link), in a regular browser tab.');
       return;
     }
     note('');
-    begin('motion');
+    begin();
   });
-  $('playTouch').addEventListener('click', () => { initAudio(); begin('touch'); });
-  $('again').addEventListener('click', () => { initAudio(); S.flipSet = false; S.samples = []; begin(mode); });
-  $('menu').addEventListener('click', () => { $('over').hidden = true; $('start').hidden = false; state = 'idle'; Object.assign(b, { x: 0, y: 0, z: 0 }); setHint(); updateHud(); });
+  $('again').addEventListener('click', () => { initAudio(); S.flipSet = false; S.samples = []; begin(); });
 
   document.addEventListener('visibilitychange', () => { lastT = 0; });
   window.addEventListener('resize', resize);
