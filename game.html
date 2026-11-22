@@ -135,11 +135,13 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
 <script>
 (() => {
   // ---------- tuning (world units are meters; the screen stands for a 60 cm wide paddle) ----------
-  const SCREEN_W_M = 0.6, G = 9.8, R_M = 0.032, E = 0.74;
+  const SCREEN_W_M = 0.6, G = 5, R_M = 0.032, E = 0.88;   // G below Earth's 9.8 for longer flights; E = share of speed kept per bounce
   const LAUNCH_GAIN = 2.6;   // real phone speed -> game speed
-  const TILT_GAIN = 0.45;    // how much tilt makes the ball drift
+  const TILT_GAIN = 0.3;     // how much tilt makes the ball drift
   const CHASE_GAIN = 2.2;    // how much moving the phone sideways shifts the ball
-  const SPIN_GAIN = 0.12;    // wrist rotation -> sideways launch
+  const SPIN_GAIN = 0.03;    // wrist rotation -> sideways launch
+  const SPIN_DEADZONE = 1.5; // rad/s of wrist rotation ignored
+  const EDGE_GRACE = 1.5;    // landings this many ball widths past the edge still count
   const MIN_BOUNCE = 1.1, MAX_VZ = 13, Z_VIEW = 5;
   const D2R = Math.PI / 180;
 
@@ -288,7 +290,8 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
   }
   function spinKick() {
     const w = toScreen(S.rot);              // [about right axis, about down axis, ...]
-    const wr = clamp(w[0], -8, 8), wu = clamp(-w[1], -8, 8);
+    const dz = v => Math.abs(v) < SPIN_DEADZONE ? 0 : v - Math.sign(v) * SPIN_DEADZONE;
+    const wr = clamp(dz(w[0]), -8, 8), wu = clamp(dz(-w[1]), -8, 8);
     return [SPIN_GAIN * wu, SPIN_GAIN * wr];
   }
 
@@ -377,7 +380,8 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
 
   function land(now) {
     const hw = W / 2 / PPM, hh = H / 2 / PPM, R = R_M;
-    const inside = Math.abs(b.x) <= hw + R * 0.3 && Math.abs(b.y) <= hh + R * 0.3;
+    const grace = R * 2 * EDGE_GRACE;
+    const inside = Math.abs(b.x) <= hw + grace && Math.abs(b.y) <= hh + grace;
     if (!inside) return gameOver();
     const vimp = -b.vz;
     const vp = clamp(S.vUp, -3, 4) * LAUNCH_GAIN;   // moving up adds, moving down cushions
