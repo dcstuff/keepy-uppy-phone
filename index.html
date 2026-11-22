@@ -44,13 +44,24 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 .chip { font-family: var(--mono); font-weight: 700; font-size: 0.95rem; padding: 3px 9px; border-radius: 999px; background: rgba(255, 180, 60, 0.16); color: var(--ball); font-variant-numeric: tabular-nums; }
 .readout { font-family: var(--mono); font-size: 0.85rem; color: var(--ink); font-variant-numeric: tabular-nums; }
 
-.hint {
-  position: fixed; left: 0; right: 0; bottom: 0; text-align: center; pointer-events: none;
+.bottom {
+  position: fixed; left: 0; right: 0; bottom: 0; pointer-events: none;
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
-  font-family: var(--mono); font-size: 0.8rem; color: var(--muted); letter-spacing: 0.02em;
+  display: grid; justify-items: center; gap: 12px;
 }
+.hint { text-align: center; font-family: var(--mono); font-size: 0.8rem; color: var(--muted); letter-spacing: 0.02em; }
+
+.meter { width: min(260px, 100%); display: grid; gap: 6px; }
+.meter-bar { position: relative; height: 8px; border-radius: 4px; background: rgba(222, 234, 248, 0.12); overflow: hidden; }
+.meter-bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 4px; background: var(--muted); }
+.meter-bar i.over { background: var(--ball); }
+.meter-bar .peak { position: absolute; top: 0; bottom: 0; width: 2px; left: 0; background: var(--ink); opacity: 0.8; }
+.meter-bar .tick { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--hot); }
+.meter-text { font-family: var(--mono); font-size: 0.75rem; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
+.meter-text.ok { color: var(--ball); }
+.meter-text.bad { color: var(--hot); }
 
 .overlay {
   position: fixed; inset: 0; display: grid; place-items: center; background: rgba(8, 18, 30, 0.55);
@@ -88,7 +99,13 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     <div class="label" id="best">Best 0</div>
   </div>
 </div>
+<div class="bottom">
+<div class="meter" id="meter" hidden>
+  <div class="meter-bar"><i id="meterFill"></i><span class="tick" id="meterTick"></span><span class="peak" id="meterPeak"></span></div>
+  <div class="meter-text" id="meterText">Upward speed</div>
+</div>
 <div class="hint" id="hint"></div>
+</div>
 
 <div class="overlay" id="start">
   <div class="card">
@@ -96,9 +113,10 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     <p>Your screen is the paddle. Keep the ball bouncing on it.</p>
     <ol>
       <li>Hold the phone flat, screen up.</li>
-      <li>Flick it upward to launch the ball.</li>
+      <li>Flick it upward to launch the ball: a short, sharp pop that stops dead, like tossing a pancake.</li>
       <li>Follow the shadow. If the ball drifts off, the arrow shows where it is.</li>
       <li>Lift the phone into the ball as it lands for a bigger bounce. Faster impacts score more.</li>
+      <li>The meter at the bottom shows how hard you flicked, and why a flick didn't count.</li>
     </ol>
     <div class="btns">
       <button class="primary" id="playMotion">Play</button>
@@ -183,9 +201,14 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
   }
 
   // ---------- sensors ----------
+  const FLICK_MIN_V = 0.35;   // real upward phone speed (m/s) a flick needs
+  const FLICK_BRAKE = 2.5;    // braking (m/s²) at the top that releases the ball
+  const FLAT_MIN_UPZ = 0.5;   // screen must be within ~60° of flat
+  const METER_MAX_V = 1.5;
   const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const S = { count: 0, flip: 1, flipSet: false, samples: [], grav: [0, 0, 9.8], up: [0, 0, 1], lin: [0, 0, 0], rot: [0, 0, 0],
-              aUp: 0, vUp: 0, last: 0, releaseV: 0, releaseT: 0 };
+  const S = { count: 0, flip: 0, zAvg: 0, grav: null, up: [0, 0, 1], lin: [0, 0, 0], rot: [0, 0, 0], hasRot: false,
+              aUp: 0, vUp: 0, last: 0, still: 0, att: null, settle: false, lastTrig: 0, events: [] };
+  const dot = (p, q) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
 
   function onMotion(e) {
     const g = e.accelerationIncludingGravity;
@@ -193,33 +216,69 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     const t = performance.now();
     const dt = clamp(S.last ? (t - S.last) / 1000 : 0.016, 0.004, 0.05);
     S.last = t; S.count++;
-    if (!S.flipSet) {
-      // Some browsers report the opposite sign. Phone starts flat & screen up, so "up" must be +z.
-      S.samples.push(g.z);
-      if (S.samples.length >= 10) {
-        const avg = S.samples.reduce((a, b) => a + b, 0) / S.samples.length;
-        S.flip = Math.abs(avg) > 4 ? Math.sign(avg) : (isIOS ? -1 : 1);
-        S.flipSet = true;
-      }
+
+    // Which way is up? Browsers disagree on the sign of these readings. The game is played
+    // screen-up, so a slow average of the raw z reading settles it, re-checked all the time.
+    S.zAvg += (g.z - S.zAvg) * (S.count === 1 ? 1 : Math.min(1, dt / 1.5));
+    let flip = S.flip;
+    if (Math.abs(S.zAvg) > 3) flip = Math.sign(S.zAvg);
+    else if (!flip) flip = isIOS ? -1 : 1;
+    if (flip !== S.flip) {
+      if (S.grav && S.flip) S.grav = S.grav.map(v => -v);
+      S.flip = flip;
     }
     const f = S.flip, aig = [g.x * f, g.y * f, g.z * f];
+
+    const r = e.rotationRate;
+    if (r && r.alpha != null) { S.rot = [(r.beta || 0) * D2R, (r.gamma || 0) * D2R, (r.alpha || 0) * D2R]; S.hasRot = true; }
+
     const a = e.acceleration;
     if (a && a.x != null) {
       S.lin = [a.x * f, a.y * f, a.z * f];
       S.grav = [aig[0] - S.lin[0], aig[1] - S.lin[1], aig[2] - S.lin[2]];
     } else {
-      const k = Math.min(1, dt / 0.25);
+      // No separate linear acceleration (some Android phones). Follow gravity with the gyro and
+      // only lean on the accelerometer for it while the phone isn't accelerating, so a quick
+      // flick isn't mistaken for a change in gravity.
+      if (!S.grav) S.grav = aig.slice();
+      if (S.hasRot) {
+        const [wx, wy, wz] = S.rot, [gx, gy, gz] = S.grav;
+        // a fixed world direction, seen from a rotating phone, turns the other way: dg = -w x g
+        S.grav = [gx - (wy * gz - wz * gy) * dt, gy - (wz * gx - wx * gz) * dt, gz - (wx * gy - wy * gx) * dt];
+      }
+      const steady = Math.abs(Math.hypot(aig[0], aig[1], aig[2]) - 9.81) < 0.8;
+      const tau = steady ? (S.hasRot ? 0.6 : 0.3) : (S.hasRot ? 4 : 1.5);
+      const k = Math.min(1, dt / tau);
       S.grav = S.grav.map((v, i) => v + (aig[i] - v) * k);
       S.lin = aig.map((v, i) => v - S.grav[i]);
     }
     const n = Math.hypot(S.grav[0], S.grav[1], S.grav[2]) || 1;
     S.up = S.grav.map(v => v / n);
-    S.aUp = S.lin[0] * S.up[0] + S.lin[1] * S.up[1] + S.lin[2] * S.up[2];
-    S.vUp = S.vUp * Math.exp(-dt / 0.35) + S.aUp * dt;   // leaky integral = recent upward speed
-    // The ball leaves the paddle when the phone, moving up, brakes hard.
-    if (S.vUp > 0.45 && S.aUp < -3.5 && t - S.releaseT > 150) { S.releaseV = Math.max(S.releaseV, S.vUp); S.releaseT = t; }
-    const r = e.rotationRate;
-    if (r && r.alpha != null) S.rot = [(r.beta || 0) * D2R, (r.gamma || 0) * D2R, (r.alpha || 0) * D2R];
+    S.aUp = dot(S.lin, S.up);
+
+    // Upward phone speed: integrate, snap to zero whenever the phone is held still, leak slowly.
+    S.vUp = S.vUp * Math.exp(-dt / 1.0) + S.aUp * dt;
+    S.still = Math.hypot(S.lin[0], S.lin[1], S.lin[2]) < 0.3 ? S.still + dt : 0;
+    if (S.still > 0.15) S.vUp = 0;
+
+    // Flick detection: follow each upward push, keep its peak speed, and release the ball when
+    // the phone brakes hard at the top. Pushes that fall short are reported on the meter.
+    // after a flick ends, wait for the phone to settle before watching for the next one
+    if (S.settle && S.vUp < 0.05) S.settle = false;
+    if (!S.att && !S.settle && S.vUp > 0.15) S.att = { t0: t, peak: 0 };
+    const A = S.att;
+    if (A) {
+      A.peak = Math.max(A.peak, S.vUp);
+      if (S.aUp < -FLICK_BRAKE && A.peak >= FLICK_MIN_V) {
+        if (S.up[2] < FLAT_MIN_UPZ) S.events.push({ type: 'miss', why: 'tilt', v: A.peak, tilt: Math.acos(clamp(S.up[2], -1, 1)) / D2R, t });
+        else if (t - S.lastTrig > 250) { S.events.push({ type: 'flick', v: A.peak, t }); S.lastTrig = t; }
+        S.att = null; S.settle = true;
+      } else if (S.vUp < 0.05 || t - A.t0 > 700) {
+        if (A.peak >= 0.2) S.events.push({ type: 'miss', why: A.peak < FLICK_MIN_V ? 'gentle' : 'stop', v: A.peak, t });
+        S.att = null; S.settle = true;
+      }
+    }
+    if (S.events.length > 8) S.events.shift();
   }
 
   function orientAngle() {
@@ -264,12 +323,13 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     Object.assign(b, { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 });
     score = 0; bounces = 0; lastMult = 1; fx.length = 0;
     state = 'rest'; playing = true;
-    S.releaseV = 0;
+    S.events.length = 0; S.att = null;
+    meterMsg('', '');
     updateHud(); setHint();
   }
 
   function setHint() {
-    if (state === 'rest') ui.hint.textContent = 'Flick the phone up to launch';
+    if (state === 'rest') ui.hint.textContent = 'Pop the phone up and stop sharply to launch';
     else if (state === 'air') ui.hint.textContent = 'Get under the shadow. Lift into the ball as it lands.';
     else ui.hint.textContent = '';
   }
@@ -278,6 +338,38 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     ui.score.textContent = score;
     ui.mult.textContent = '×' + lastMult;
     ui.height.textContent = state === 'air' ? '↑ ' + b.z.toFixed(2) + ' m' : 'on screen';
+  }
+
+  const meter = { el: $('meter'), fill: $('meterFill'), peak: $('meterPeak'), text: $('meterText'), until: 0, hold: 0 };
+  $('meterTick').style.left = (FLICK_MIN_V / METER_MAX_V * 100) + '%';
+  function meterMsg(msg, kind) {
+    meter.text.textContent = msg || (state === 'air' ? 'Phone lift' : 'Upward speed');
+    meter.text.className = 'meter-text' + (kind ? ' ' + kind : '');
+    meter.until = msg ? performance.now() + 2600 : 0;
+  }
+  function updateMeter(now, dt) {
+    meter.el.hidden = !playing;
+    if (!playing) return;
+    const v = Math.max(0, S.vUp);
+    meter.hold = Math.max(v, meter.hold - dt * 0.6);
+    meter.fill.style.width = Math.min(100, v / METER_MAX_V * 100) + '%';
+    meter.fill.classList.toggle('over', v >= FLICK_MIN_V);
+    meter.peak.style.left = 'calc(' + Math.min(100, meter.hold / METER_MAX_V * 100) + '% - 2px)';
+    if (meter.until && now > meter.until) meterMsg('', '');
+  }
+
+  function processEvents(now) {
+    while (S.events.length) {
+      const ev = S.events.shift();
+      if (!playing || state !== 'rest' || now - ev.t > 300) continue;
+      if (ev.type === 'flick') {
+        const k = spinKick();
+        launch(ev.v * LAUNCH_GAIN, k[0], k[1]);
+        meterMsg('Launched · ' + ev.v.toFixed(2) + ' m/s', 'ok');
+      } else if (ev.why === 'gentle') meterMsg('Too gentle · ' + ev.v.toFixed(2) + ' of ' + FLICK_MIN_V + ' m/s', 'bad');
+      else if (ev.why === 'stop') meterMsg('Fast enough · stop sharper at the top', 'bad');
+      else meterMsg('Hold flatter · screen tilted ' + Math.round(ev.tilt) + '°', 'bad');
+    }
   }
 
   function launch(vz, vx = 0, vy = 0) {
@@ -298,6 +390,7 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
       state = 'rest'; b.z = 0; b.vz = 0; b.vx *= 0.5; b.vy *= 0.5;
       blip(180, 0.1, 'sine', 0.1);
       fx.push({ kind: 'ring', x: b.x, y: b.y, t: now, s: 0.6 });
+      meterMsg('Ball settled · flick to launch again', '');
       updateHud(); setHint();
       return;
     }
@@ -308,6 +401,7 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     fx.push({ kind: 'ring', x: b.x, y: b.y, t: now, s: Math.min(2, 0.6 + vimp / 5) });
     fx.push({ kind: 'pop', x: b.x, y: b.y, t: now, text: '+' + mult + (mult > 1 ? '  ×' + mult : '') });
     blip(300 + vimp * 60, 0.14, 'square', 0.12); buzz(25);
+    meterMsg(S.vUp > 0.1 ? 'Bounce · lifted ' + S.vUp.toFixed(2) + ' m/s' : (S.vUp < -0.1 ? 'Bounce · cushioned' : 'Bounce · no lift'), S.vUp > 0.1 ? 'ok' : '');
     updateHud();
   }
 
@@ -335,13 +429,6 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
 
   function step(dt, now) {
     if (!playing) return;
-    if (state === 'rest' && S.releaseV > 0) {
-      if (now - S.releaseT < 150 && S.up[2] > 0.5) {
-        const k = spinKick();
-        launch(S.releaseV * LAUNCH_GAIN, k[0], k[1]);
-      }
-      S.releaseV = 0;
-    }
     const [ax, ay] = lateralAccel();
     const hw = W / 2 / PPM, hh = H / 2 / PPM, R = R_M;
     if (state === 'air') {
@@ -448,7 +535,9 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
   let lastT = 0;
   function frame(t) {
     const dt = Math.min(0.033, lastT ? (t - lastT) / 1000 : 0.016); lastT = t;
+    processEvents(performance.now());
     if (playing) { step(dt / 2, t); if (playing) step(dt / 2, t); }
+    updateMeter(performance.now(), dt);
     if (state === 'air') ui.height.textContent = '↑ ' + Math.max(0, b.z).toFixed(2) + ' m';
     render(t);
     requestAnimationFrame(frame);
@@ -473,7 +562,6 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
       }
     } catch (e) { /* not a user gesture or unsupported: fall through to detection */ }
     if (!listening) { window.addEventListener('devicemotion', onMotion); listening = true; }
-    S.flipSet = false; S.samples = [];
     const startCount = S.count;
     $('playMotion').textContent = 'Checking sensors…';
     await new Promise(r => setTimeout(r, 900));
@@ -485,7 +573,7 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
     note('');
     begin();
   });
-  $('again').addEventListener('click', () => { initAudio(); S.flipSet = false; S.samples = []; begin(); });
+  $('again').addEventListener('click', () => { initAudio(); begin(); });
 
   document.addEventListener('visibilitychange', () => { lastT = 0; });
   window.addEventListener('resize', resize);

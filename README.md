@@ -7,4 +7,6 @@ Keep a ball bouncing on your phone screen. Flick the phone up to launch the ball
 - `index.html` is the game, a single self-contained file.
 - `game.html` is the same game without the page wrapper, used for the Claude artifact version.
 
-Tuning settings (`LAUNCH_GAIN`, `TILT_GAIN`, `CHASE_GAIN`, `SPIN_GAIN`, `E`) are at the top of the script.
+**How to flick:** hold the phone flat, then give it a short, sharp pop upward and stop dead, like tossing a pancake. A slow lift won't launch the ball. The meter at the bottom of the screen shows your upward speed against the launch threshold (red mark), and tells you why a flick didn't count: too gentle, not a sharp enough stop, or the screen tilted more than about 60°.
+
+Tuning settings are at the top of the script: `LAUNCH_GAIN`, `TILT_GAIN`, `CHASE_GAIN`, `SPIN_GAIN` and `E` for the physics, and `FLICK_MIN_V` (upward speed a flick needs, default 0.35 m/s) and `FLICK_BRAKE` (braking that releases the ball, default 2.5 m/s²) in the sensor section.
